@@ -13,6 +13,9 @@ let package = Package(
         .library(
             name: "MetalNeuralKit",
             targets: ["MetalNeuralKit"]),
+        .executable(
+            name: "MetalNeuralKitDemo",
+            targets: ["MetalNeuralKitDemo"])
     ],
     dependencies: [
         // No external dependencies initially, we'll use system frameworks
@@ -26,6 +29,9 @@ let package = Package(
             resources: [
                 .process("Resources") // For any model resources we might need
             ]),
+        .executableTarget(
+            name: "MetalNeuralKitDemo",
+            dependencies: ["MetalNeuralKit"]),
         .testTarget(
             name: "MetalNeuralKitTests",
             dependencies: ["MetalNeuralKit"]
