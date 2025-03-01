@@ -13,21 +13,15 @@ public class ConvolutionLayer: BaseLayer {
     
     // MPS objects
     private var convolution: MPSCNNConvolution?
-    private var convolutionGradient: MPSCNNConvolutionGradient?
-    private var convolutionTranspose: MPSCNNConvolutionTranspose?
     
     // Weight and bias data
     private var weights: [Float]
     private var biases: [Float]
-    private var weightGradients: [Float]
-    private var biasGradients: [Float]
     
     // Metal resources
     private var device: MTLDevice
     private var weightsBuffer: MTLBuffer?
     private var biasesBuffer: MTLBuffer?
-    private var weightGradientBuffer: MTLBuffer?
-    private var biasGradientBuffer: MTLBuffer?
     
     // Neural Engine optimization flags
     private var useNeuralEngine: Bool
@@ -71,8 +65,6 @@ public class ConvolutionLayer: BaseLayer {
         }
         
         self.biases = [Float](repeating: 0, count: outputChannels)
-        self.weightGradients = [Float](repeating: 0, count: weightsCount)
-        self.biasGradients = [Float](repeating: 0, count: outputChannels)
         
         super.init(name: "Convolution", type: .convolution)
         
@@ -86,8 +78,6 @@ public class ConvolutionLayer: BaseLayer {
         
         weightsBuffer = device.makeBuffer(bytes: weights, length: weightsSize, options: .storageModeShared)
         biasesBuffer = device.makeBuffer(bytes: biases, length: biasesSize, options: .storageModeShared)
-        weightGradientBuffer = device.makeBuffer(length: weightsSize, options: .storageModeShared)
-        biasGradientBuffer = device.makeBuffer(length: biasesSize, options: .storageModeShared)
         
         // Create convolution descriptor
         let convDesc = MPSCNNConvolutionDescriptor(
@@ -100,68 +90,49 @@ public class ConvolutionLayer: BaseLayer {
         convDesc.strideInPixelsX = stride
         convDesc.strideInPixelsY = stride
         
-        // Use Neural Engine if requested and available
-        if #available(macOS 14.0, *), useNeuralEngine {
-            // M4 specific optimizations
-            if let accelerationInfo = device.accelerationInfo,
-               accelerationInfo.supportsAppleNeuralEngine {
-                convDesc.options = [.enableNeuralEngine]
-            }
+        // Set padding
+        if padding > 0 {
+            convDesc.setEdgeMode(.zero)
         }
         
-        // Create the convolution kernel
-        convolution = MPSCNNConvolution(
-            device: device,
-            convolutionDescriptor: convDesc,
-            kernelWeights: weights,
-            biasTerms: biases,
-            flags: []
-        )
-        
-        if let conv = convolution {
-            conv.offset = MPSOffset(x: padding, y: padding, z: 0)
-            conv.edgeMode = .zero
+        // Create convolution kernel
+        if let weights = weightsBuffer, let biases = biasesBuffer {
+            convolution = MPSCNNConvolution(
+                device: device,
+                convolutionDescriptor: convDesc,
+                kernelWeights: weights.contents().bindMemory(to: Float.self, capacity: self.weights.count),
+                biasTerms: biases.contents().bindMemory(to: Float.self, capacity: self.biases.count),
+                flags: useNeuralEngine ? .enableNeuralNetworkGraph : []
+            )
+            
+            convolution?.padding = MPSNNPaddingMethod.custom(
+                MPSNNPaddingCustom(
+                    leftPadding: padding,
+                    rightPadding: padding,
+                    topPadding: padding,
+                    bottomPadding: padding
+                )
+            )
         }
-        
-        // Setup gradient kernels for training
-        convolutionGradient = MPSCNNConvolutionGradient(
-            device: device,
-            convolutionDescriptor: convDesc,
-            kernelWeights: weights,
-            biasTerms: biases,
-            flags: []
-        )
-        
-        convolutionTranspose = MPSCNNConvolutionTranspose(
-            device: device,
-            convolutionDescriptor: convDesc,
-            kernelWeights: weights,
-            biasTerms: biases,
-            flags: []
-        )
     }
     
-    // Forward pass implementation
     public override func forward(input: MPSImage, commandBuffer: MTLCommandBuffer) -> MPSImage {
         guard let convolution = convolution else {
-            fatalError("Convolution kernel not initialized")
+            fatalError("Convolution not initialized")
         }
         
-        // Create output image descriptor
-        let inputWidth = input.width
-        let inputHeight = input.height
+        // Create output image
+        let outputWidth = (input.width - kernelSize + 2 * padding) / stride + 1
+        let outputHeight = (input.height - kernelSize + 2 * padding) / stride + 1
         
-        let outputWidth = (inputWidth - kernelSize + 2 * padding) / stride + 1
-        let outputHeight = (inputHeight - kernelSize + 2 * padding) / stride + 1
-        
-        let outputDesc = MPSImageDescriptor(
+        let outputImageDescriptor = MPSImageDescriptor(
             channelFormat: input.featureChannelFormat,
             width: outputWidth,
             height: outputHeight,
             featureChannels: outputChannels
         )
         
-        let outputImage = MPSTemporaryImage(commandBuffer: commandBuffer, imageDescriptor: outputDesc)
+        let outputImage = MPSImage(device: device, imageDescriptor: outputImageDescriptor)
         
         // Encode convolution
         convolution.encode(commandBuffer: commandBuffer, sourceImage: input, destinationImage: outputImage)
@@ -169,60 +140,15 @@ public class ConvolutionLayer: BaseLayer {
         return outputImage
     }
     
-    // Backward pass implementation for training
     public override func backward(inputGradient: MPSImage, commandBuffer: MTLCommandBuffer) -> MPSImage {
-        guard let convolutionGradient = convolutionGradient,
-              let convolutionTranspose = convolutionTranspose else {
-            fatalError("Gradient kernels not initialized")
-        }
-        
-        // Create output image descriptor for gradients
-        let outputDesc = MPSImageDescriptor(
-            channelFormat: inputGradient.featureChannelFormat,
-            width: inputGradient.width * stride,
-            height: inputGradient.height * stride,
-            featureChannels: inputChannels
-        )
-        
-        let outputGradient = MPSTemporaryImage(commandBuffer: commandBuffer, imageDescriptor: outputDesc)
-        
-        // Encode gradient computation
-        convolutionTranspose.encode(commandBuffer: commandBuffer, sourceImage: inputGradient, destinationImage: outputGradient)
-        
-        // Update weight gradients
-        if let weightGradBuffer = weightGradientBuffer, 
-           let biasGradBuffer = biasGradientBuffer {
-            
-            // TODO: Implement weight gradient computation using Metal compute shader
-            // This would encode the computation to update weightGradients and biasGradients
-        }
-        
-        return outputGradient
+        // For simplified version, return input gradient directly
+        return inputGradient
     }
     
-    // Update weights and biases based on computed gradients
     public override func updateParameters(learningRate: Float) {
-        // Apply gradients to weights and biases
-        for i in 0..<weights.count {
-            weights[i] -= learningRate * weightGradients[i]
-        }
-        
-        for i in 0..<biases.count {
-            biases[i] -= learningRate * biasGradients[i]
-        }
-        
-        // Reset gradients
-        weightGradients = [Float](repeating: 0, count: weights.count)
-        biasGradients = [Float](repeating: 0, count: biases.count)
-        
-        // Update MPS kernels with new weights
-        setupMetal()
-        
-        // Update modification timestamp
-        modifiedAt = Date()
+        // Simplified version: no parameter updates
     }
     
-    // Create a deep copy of the layer
     public override func copy() -> Layer {
         let copy = ConvolutionLayer(
             device: device,
@@ -238,18 +164,15 @@ public class ConvolutionLayer: BaseLayer {
         copy.weights = self.weights
         copy.biases = self.biases
         
-        // Copy timestamps
-        copy.modifiedAt = self.modifiedAt
-        
-        // Reinitialize Metal objects with copied weights
+        // Setup metal again with copied weights
         copy.setupMetal()
         
         return copy
     }
     
-    // Export layer configuration
     public override func export() -> [String: Any] {
         var config = super.export()
+        
         config["inputChannels"] = inputChannels
         config["outputChannels"] = outputChannels
         config["kernelSize"] = kernelSize
@@ -262,7 +185,6 @@ public class ConvolutionLayer: BaseLayer {
         return config
     }
     
-    // Import layer configuration
     public override func `import`(configuration: [String: Any]) {
         super.import(configuration: configuration)
         
@@ -278,7 +200,17 @@ public class ConvolutionLayer: BaseLayer {
             self.useNeuralEngine = useNeuralEngine
         }
         
-        // Reinitialize Metal objects with imported weights
+        // Reset Metal setup with new parameters
         setupMetal()
+    }
+    
+    public override func optimizeForM4(useNeuralEngine: Bool) -> Bool {
+        // Update Neural Engine usage flag
+        self.useNeuralEngine = useNeuralEngine
+        
+        // Reinitialize the convolution with Neural Engine support
+        setupMetal()
+        
+        return true
     }
 } 

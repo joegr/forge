@@ -16,12 +16,6 @@ public protocol Layer: AnyObject {
     /// Parameters of the layer that can be trained/updated
     var parameters: [String: Any] { get }
     
-    /// Timestamp when the layer was created
-    var createdAt: Date { get }
-    
-    /// Timestamp when the layer was last modified
-    var modifiedAt: Date { get }
-    
     /// Forward pass logic
     func forward(input: MPSImage, commandBuffer: MTLCommandBuffer) -> MPSImage
     
@@ -39,6 +33,9 @@ public protocol Layer: AnyObject {
     
     /// Import layer configuration from a dictionary
     func `import`(configuration: [String: Any])
+    
+    /// Optimize the layer for M4 hardware if applicable
+    func optimizeForM4(useNeuralEngine: Bool) -> Bool
 }
 
 /// Type of neural network layer
@@ -48,7 +45,6 @@ public enum LayerType: String, Codable {
     case fullyConnected
     case activation
     case batchNormalization
-    case dropout
     case custom
 }
 
@@ -104,5 +100,10 @@ open class BaseLayer: Layer {
         if let modifiedAt = configuration["modifiedAt"] as? TimeInterval {
             self.modifiedAt = Date(timeIntervalSince1970: modifiedAt)
         }
+    }
+    
+    open func optimizeForM4(useNeuralEngine: Bool) -> Bool {
+        // Default implementation: no M4-specific optimizations
+        return false
     }
 } 

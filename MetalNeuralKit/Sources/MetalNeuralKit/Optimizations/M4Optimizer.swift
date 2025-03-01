@@ -73,8 +73,11 @@ public class M4Optimizer {
         )
         
         // Optimize each layer
-        for layer in network.layers {
-            optimizeLayer(layer)
+        var optimizationSuccess = true
+        for i in 0..<network.getLayers().count {
+            let layer = network.getLayer(at: i)
+            let layerSuccess = layer.optimizeForM4(useNeuralEngine: isNeuralEngineAvailable)
+            optimizationSuccess = optimizationSuccess && layerSuccess
         }
         
         // Record a snapshot after optimization
@@ -83,193 +86,60 @@ public class M4Optimizer {
             reason: .performanceOptimization
         )
         
-        return true
+        return optimizationSuccess
     }
     
-    /// Optimize a layer for M4 architecture
-    /// - Parameter layer: The layer to optimize
-    private func optimizeLayer(_ layer: Layer) {
-        switch layer.type {
-        case .convolution:
-            optimizeConvolutionLayer(layer)
-        case .fullyConnected:
-            optimizeFullyConnectedLayer(layer)
-        case .batchNormalization:
-            optimizeBatchNormalizationLayer(layer)
-        case .pooling:
-            optimizePoolingLayer(layer)
-        default:
-            // Other layer types may not need specific optimizations
-            break
-        }
-    }
-    
-    /// Optimize a convolution layer for M4 architecture
-    /// - Parameter layer: The convolution layer to optimize
-    private func optimizeConvolutionLayer(_ layer: Layer) {
-        guard let convLayer = layer as? ConvolutionLayer else { return }
-        
-        // Enable Neural Engine if available
-        if isNeuralEngineAvailable {
-            convLayer.useNeuralEngine = true
-        }
-        
-        // Set precision based on configuration
-        convLayer.useHalfPrecision = useHalfPrecision
-        
-        // Adjust kernel parameters for M4 architecture
-        // In a real implementation, this would involve more sophisticated
-        // adjustments based on M4-specific optimizations
-        
-        // For demonstration purposes, we'll just adjust some parameters
-        
-        // Optimize convolution groups
-        if let inputChannels = convLayer.parameters["inputChannels"] as? Int,
-           let outputChannels = convLayer.parameters["outputChannels"] as? Int {
-            
-            // Check if we can use grouped convolutions
-            if inputChannels == outputChannels && inputChannels.isMultiple(of: 4) {
-                convLayer.parameters["groups"] = 4
-            }
-        }
-        
-        // Add a note about optimization
-        var notes = convLayer.parameters["optimizationNotes"] as? [String] ?? []
-        notes.append("Optimized for M4 Neural Engine on \(Date())")
-        convLayer.parameters["optimizationNotes"] = notes
-    }
-    
-    /// Optimize a fully connected layer for M4 architecture
-    /// - Parameter layer: The fully connected layer to optimize
-    private func optimizeFullyConnectedLayer(_ layer: Layer) {
-        // In a real implementation, this would apply M4-specific optimizations
-        
-        // Add a note about optimization
-        var notes = layer.parameters["optimizationNotes"] as? [String] ?? []
-        notes.append("Optimized for M4 on \(Date())")
-        layer.parameters["optimizationNotes"] = notes
-    }
-    
-    /// Optimize a batch normalization layer for M4 architecture
-    /// - Parameter layer: The batch normalization layer to optimize
-    private func optimizeBatchNormalizationLayer(_ layer: Layer) {
-        // In a real implementation, this would apply M4-specific optimizations
-        
-        // Add a note about optimization
-        var notes = layer.parameters["optimizationNotes"] as? [String] ?? []
-        notes.append("Optimized for M4 on \(Date())")
-        layer.parameters["optimizationNotes"] = notes
-    }
-    
-    /// Optimize a pooling layer for M4 architecture
-    /// - Parameter layer: The pooling layer to optimize
-    private func optimizePoolingLayer(_ layer: Layer) {
-        // In a real implementation, this would apply M4-specific optimizations
-        
-        // Add a note about optimization
-        var notes = layer.parameters["optimizationNotes"] as? [String] ?? []
-        notes.append("Optimized for M4 on \(Date())")
-        layer.parameters["optimizationNotes"] = notes
-    }
-    
-    /// Create an optimized graph for the neural network
-    /// - Parameter network: The neural network
-    /// - Returns: An optimized MPSGraph
-    public func createOptimizedGraph(for network: NeuralNetwork) -> MPSGraph {
+    /// Create an MPSGraph optimized for M4
+    /// - Returns: An optimized MPSGraph instance
+    public func createOptimizedGraph() -> MPSGraph {
         let graph = MPSGraph()
         
-        // Configure graph options
+        // Set optimization options if running on M4
         if isM4Chip {
-            // M4-specific options
-            graph.options = [
-                .synchronizeResults: true,
-                .debugMode: false
-            ]
+            // Enable optimizations
+            graph.options = MPSGraphOptions.synchronizeResults
             
+            // Enable half-precision if requested
             if useHalfPrecision {
-                // Use half precision
-                graph.options[.dataTypeMode] = MPSGraphOptions.DataTypeMode.preferFast.rawValue
+                // This would enable FP16 computations when supported
+                // Implementation would depend on MPSGraph capabilities
             }
         }
-        
-        // In a real implementation, this would build a complete graph
-        // based on the network's layers
         
         return graph
     }
     
-    /// Get M4-specific optimization tips
-    /// - Returns: Array of optimization tips
-    public func getM4OptimizationTips() -> [String] {
-        return [
-            "Use half-precision (Float16) for most operations to leverage enhanced M4 half-precision performance",
-            "Enable Neural Engine for convolution and fully connected layers",
-            "Use grouped convolutions where possible",
-            "Batch operations to minimize CPU-GPU synchronization",
-            "Use MPSGraph for complex operations to leverage automatic optimization",
-            "Minimize data transfers between CPU and GPU",
-            "Consider fusing operations (like convolution + bias + activation) for performance",
-            "Allocate persistent buffers to avoid Metal resource creation overhead"
-        ]
-    }
-    
-    /// Get M4 capability information
-    /// - Returns: Dictionary of capability information
-    public func getM4CapabilityInfo() -> [String: Any] {
+    /// Get M4 optimization capabilities
+    /// - Returns: A dictionary of capabilities
+    public func getM4Capabilities() -> [String: Any] {
         return [
             "isM4Chip": isM4Chip,
             "hasNeuralEngine": isNeuralEngineAvailable,
-            "deviceName": device.name,
-            "registryID": device.registryID,
-            "supportsUnifiedMemory": device.hasUnifiedMemory,
-            "recommendedMaxWorkingSetSize": device.recommendedMaxWorkingSetSize,
-            "supportsMPSGraph": true
+            "supportsHalfPrecision": true,
+            "deviceName": device.name
         ]
     }
     
-    /// Get the optimal thread group size for compute kernels on M4
-    /// - Returns: MTLSize with optimal thread group dimensions
-    public func getOptimalM4ThreadGroupSize() -> MTLSize {
-        // On M4, optimal thread group sizes depend on the specific compute unit
-        // but these are generally good starting points
-        return MTLSizeMake(32, 4, 1)
-    }
-    
-    /// Create an optimized compute pipeline state for M4
-    /// - Parameters:
-    ///   - functionName: The Metal function name
-    ///   - library: The Metal library
-    /// - Returns: An optimized compute pipeline state
-    public func createOptimizedComputePipelineState(
-        functionName: String,
-        library: MTLLibrary
-    ) -> MTLComputePipelineState? {
-        guard let function = library.makeFunction(name: functionName) else {
-            print("Failed to create function \(functionName)")
-            return nil
+    /// Get optimization recommendations for current hardware
+    /// - Returns: Array of recommendations
+    public func getOptimizationTips() -> [String] {
+        var tips: [String] = []
+        
+        if isM4Chip {
+            tips.append("Use half-precision (Float16) operations for better performance")
+            
+            if isNeuralEngineAvailable {
+                tips.append("Enable Neural Engine for compatible layers")
+                tips.append("Batch operations for better Neural Engine utilization")
+            }
+            
+            tips.append("Minimize CPU-GPU data transfers")
+            tips.append("Use MPSGraph for complex operations")
+        } else {
+            tips.append("M4-specific optimizations not available on this device")
         }
         
-        // Create pipeline state with optimization options
-        let descriptor = MTLComputePipelineDescriptor()
-        descriptor.computeFunction = function
-        
-        // Enable threadgroup memory length optimization
-        descriptor.threadGroupSizeIsMultipleOfThreadExecutionWidth = true
-        
-        // Enable buffer data types
-        descriptor.buffers[0].mutability = .immutable
-        
-        do {
-            // Create optimized pipeline state
-            return try device.makeComputePipelineState(
-                descriptor: descriptor,
-                options: [.argumentInfo, .bufferTypeInfo],
-                reflection: nil
-            )
-        } catch {
-            print("Failed to create compute pipeline state: \(error)")
-            return nil
-        }
+        return tips
     }
 }
 
